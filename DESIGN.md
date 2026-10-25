@@ -86,6 +86,10 @@ output/{deck_id}/
 - `fetch_recipe_deck(recipe_id)` は `https://cf-vanguard.com/manage/deckrecipe/detail` を呼び出し、`is_ride` でライドデッキを判定、`card_kind` が 4〜9 のカードを横向きカードとして扱う。
 - `recipe` サブコマンドは抽出した各Deck IDに対して `convert_single_deck` を順番に呼び出し、続けてレシピIDに対して `convert_recipe_deck` を実行する。同じオプション（`--refresh`、`--install`、`--cloud-path`、`--cloud-cli`）を再利用し、途中でエラーがあっても残りのデッキの処理は続行するが、終了コードは最後に発生した非0値を返す。
 - レシピAPI由来の出力は `RECIPE{id}` をDeck IDとし、`deck_meta.name` をタイトルに設定する。
+- `build_save_filename` で `DeckID_タイトル.json` 形式の保存ファイル名を生成（Windowsの禁止文字は `_` 置換、120文字程度で切り詰め）。
+- サムネイル用に `ImageSnapURL` / `ImageSecondaryURL` を設定。グレード3カードを優先し、Steam Cloudへ置換後も `apply_cloud_urls` で更新する。
+- `install_save` では JSON と同名の PNG（選定したサムネイルカードの画像）も Saved Objects へコピーし、Save & Load 一覧にカード画像が表示されるようにする。
+- 横向きカードは `direction=1` のままPNGを縦長へ回転させる（`maybe_rotate_landscape`）、APIに `direction` が含まれないケースは画像寸法から判定する。
 - ページ構造が変わってDeck Logリンクが掲載されなくなった場合に備えて、エラー文言でURL確認と公開状態の確認を促す。
 
 ## 5. TTS形式

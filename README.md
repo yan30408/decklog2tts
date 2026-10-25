@@ -40,7 +40,7 @@ python decklog2tts.py recipe "https://cf-vanguard.com/deckrecipe/deckrecipe_staf
 ```text
 output/
   1NWU1J/
-    1NWU1J.json
+    1NWU1J_ペルソナ3（キタロー）.json
     manifest.json
     assets/
       DZ-TBP02__dztbp02_004.png
@@ -69,6 +69,8 @@ cache/
 - `--refresh`: 既存の画像キャッシュを再取得
 - `--cloud-path`: Steam Cloud上のリモートパスを指定（既定: `decklog2tts/assets`）。環境変数 `DECKLOG2TTS_CLOUD_PATH` でも設定可
 - `--cloud-cli`: 利用する `sync-with-cloud` コマンド名またはパスを指定。環境変数 `DECKLOG2TTS_CLOUD_CLI` に設定すると毎回指定不要
+
+生成されたJSONのファイル名は `DeckID_タイトル.json` 形式になります。Windowsで利用できない文字は自動的に `_` に置換されます。`--install` 実行時には同名のPNG（グレード3があればそのカード、なければ先頭カードの画像）も Saved Objects へコピーされるため、TTS の Save & Load 一覧でもカード画像がサムネイルとして表示されます。
 
 ```powershell
 # 例: 解凍したTTSCloudSyncのディレクトリを指定
