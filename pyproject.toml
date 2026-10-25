@@ -1,0 +1,32 @@
+[tool.poetry]
+name = "decklog2tts"
+version = "0.1.0"
+description = "DECK LOG deck exporter for Tabletop Simulator"
+authors = ["yan3"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = ">=3.11,<3.13"
+openpyxl = ">=3.1,<4.0"
+jinja2 = ">=3.1,<4.0"
+pydantic = ">=2.9,<3.0"
+rich = ">=13.7,<14.0"
+click = ">=8.1,<8.2"
+
+[tool.poetry.group.dev.dependencies]
+pyinstaller = ">=6.10,<7.0"
+pytest = ">=8.3,<9.0"
+ruff = ">=0.8,<0.9"
+
+[tool.poetry.scripts]
+decklog2tts = "decklog2tts:main"
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
