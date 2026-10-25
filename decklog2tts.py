@@ -71,6 +71,88 @@ def normalize_deck_id(value: str) -> str:
     return deck_id.upper()
 
 
+def extract_recipe_sources(url: str) -> tuple[list[str], list[str]]:
+    raw, ctype = request_bytes(url, referer=url)
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        text = raw.decode("utf-8", errors="ignore")
+
+    codes: list[str] = []
+    recipe_ids: list[str] = []
+
+    def add(code: str) -> None:
+        try:
+            normalized = normalize_deck_id(code)
+        except ValueError:
+            return
+        if normalized not in codes:
+            codes.append(normalized)
+
+    for match in re.finditer(r"https?://decklog\\.bushiroad\\.com/view/([A-Za-z0-9]+)", text, re.IGNORECASE):
+        add(match.group(1))
+
+    if not codes:
+        for match in re.finditer(r"DECK\\s*LOG(?:コード|code)[:：\\s]*([A-Za-z0-9]+)", text, re.IGNORECASE):
+            add(match.group(1))
+
+    for match in re.finditer(r"data-recipe-id=\"(\d+)\"", text, re.IGNORECASE):
+        recipe_id = match.group(1)
+        if recipe_id not in recipe_ids:
+            recipe_ids.append(recipe_id)
+
+    return codes, recipe_ids
+
+
+def fetch_recipe_deck(recipe_id: str) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
+    url = f"https://cf-vanguard.com/manage/deckrecipe/detail?id={recipe_id}"
+    raw, ctype = request_bytes(url, referer=url)
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except Exception as e:
+        raise RuntimeError(f"公式デッキレシピAPIをJSONとして解析できません: Content-Type={ctype!r}") from e
+    if not isinstance(data, dict) or not data.get("success"):
+        raise RuntimeError("公式デッキレシピAPIが失敗を返しました。")
+    deck = data.get("deck")
+    details = data.get("details")
+    if not isinstance(deck, dict) or not isinstance(details, list):
+        raise RuntimeError("公式デッキレシピAPIの形式が想定外です。")
+
+    main: list[dict[str, Any]] = []
+    ride: list[dict[str, Any]] = []
+
+    for entry in details:
+        if not isinstance(entry, dict):
+            continue
+        img = str(entry.get("picture", "")).strip()
+        if not img:
+            continue
+        item = {
+            "name": str(entry.get("card_name", "")),
+            "card_number": str(entry.get("card_number", "")),
+            "img": img,
+            "num": _coerce_int(entry.get("num")),
+        }
+        target = ride if _coerce_int(entry.get("is_ride")) else main
+        target.append(item)
+
+    if not main and not ride:
+        raise RuntimeError("公式デッキレシピのカード詳細が取得できませんでした。")
+
+    return deck, main, ride
+
+
+def build_recipe_deck_structure(recipe_id: str, deck_meta: dict[str, Any], main: list[dict[str, Any]], ride: list[dict[str, Any]]) -> dict[str, Any]:
+    deck_id = f"RECIPE{recipe_id}"
+    title = str(deck_meta.get("name") or deck_meta.get("deck_name") or deck_id)
+    return {
+        "deck_id": deck_id,
+        "title": title,
+        "list": main,
+        "p_list": ride,
+    }
+
+
 def request_bytes(url: str, *, method: str = "GET", referer: str | None = None) -> tuple[bytes, str]:
     headers = {"User-Agent": UA, "Accept": "application/json, text/plain, */*"}
     if referer:
@@ -144,9 +226,7 @@ def download_images(
         else:
             raw_w = width if width > 0 else DEFAULT_CARD_WIDTH
             raw_h = height if height > 0 else DEFAULT_CARD_HEIGHT
-        short_side = min(raw_w, raw_h)
-        long_side = max(raw_w, raw_h)
-        dimensions[img] = (short_side, long_side)
+        dimensions[img] = (raw_w, raw_h)
     return mapping, dimensions
 
 
@@ -491,6 +571,29 @@ def generate(deck: dict[str, Any], out_root: Path, asset_base: str, refresh: boo
     ride = list(deck.get("p_list") or [])
     all_items = main + ride
     mapping, dimensions = download_images(all_items, cache_root, refresh)
+    for item in all_items:
+        if "direction" in item:
+            continue
+        img = str(item.get("img", ""))
+        dims = dimensions.get(img)
+        if dims and dims[0] > 0 and dims[1] > 0:
+            item["direction"] = 1 if dims[0] > dims[1] else 0
+        else:
+            item["direction"] = 0
+    for item in all_items:
+        img = str(item.get("img", ""))
+        if not img:
+            continue
+        name = mapping.get(img)
+        if not name:
+            continue
+        sideways = bool(item.get("direction"))
+        if not sideways:
+            continue
+        dims = dimensions.get(img)
+        width = dims[0] if dims else 0
+        height = dims[1] if dims else 0
+        maybe_rotate_landscape(cache_root / name, width, height, sideways)
     ensure_card_back(cache_root, refresh)
     required_names = set(mapping.values()) | {CARD_BACK_NAME}
     sync_deck_assets(required_names, cache_root, assets, refresh)
@@ -647,33 +750,126 @@ def apply_cloud_urls(save_path: Path, manifest_path: Path, remote_path: str, url
     return asset_base
 
 
-
-def cmd_convert(args: argparse.Namespace) -> int:
-    deck_id = normalize_deck_id(args.deck)
+def convert_single_deck(
+    deck_id: str,
+    *,
+    output: str,
+    refresh: bool,
+    install: bool,
+    cloud_path: str,
+    cloud_cli: str,
+) -> int:
     try:
         deck = fetch_deck(deck_id)
         asset_base = PLACEHOLDER_ASSET_BASE.format(deck_id=deck_id)
-        save_path, bundle, mapping = generate(deck, Path(args.output), asset_base, args.refresh)
+        save_path, bundle, mapping = generate(deck, Path(output), asset_base, refresh)
         required_names = set(mapping.values()) | {CARD_BACK_NAME}
-        remote_path = args.cloud_path.format(deck_id=deck_id)
+        remote_path = cloud_path.format(deck_id=deck_id)
         CACHE_ROOT.mkdir(parents=True, exist_ok=True)
-        all_urls = sync_assets_to_cloud(CACHE_ROOT, deck_id=deck_id, command=args.cloud_cli, remote_path=remote_path)
+        all_urls = sync_assets_to_cloud(CACHE_ROOT, deck_id=deck_id, command=cloud_cli, remote_path=remote_path)
         filtered_urls = {name: all_urls[name] for name in required_names if name in all_urls}
         missing_urls = required_names - filtered_urls.keys()
         if missing_urls:
             raise RuntimeError("Steam Cloudに存在しないアセットがあります: " + ", ".join(sorted(missing_urls)))
         asset_base = apply_cloud_urls(save_path, bundle / "manifest.json", remote_path, filtered_urls)
     except (urllib.error.URLError, RuntimeError, ValueError) as e:
-        print(f"ERROR: {e}", file=sys.stderr)
+        print(f"ERROR[{deck_id}]: {e}", file=sys.stderr)
         return 1
-    print(f"created: {save_path}")
-    print(f"assets : {bundle / 'assets'}")
-    print(f"cache  : {CACHE_ROOT}")
-    print(f"cloud  : {asset_base}")
-    if args.install:
-        print(f"installed: {install_save(save_path)}")
+    print(f"created[{deck_id}]: {save_path}")
+    print(f"assets [{deck_id}]: {bundle / 'assets'}")
+    print(f"cache  [{deck_id}]: {CACHE_ROOT}")
+    print(f"cloud  [{deck_id}]: {asset_base}")
+    if install:
+        print(f"installed[{deck_id}]: {install_save(save_path)}")
     print("TTSを起動し Games > Save & Load からセーブを読み込むと、画像はSteam Cloudから配信されます。")
     return 0
+
+
+
+def cmd_convert(args: argparse.Namespace) -> int:
+    deck_id = normalize_deck_id(args.deck)
+    return convert_single_deck(
+        deck_id,
+        output=args.output,
+        refresh=args.refresh,
+        install=args.install,
+        cloud_path=args.cloud_path,
+        cloud_cli=args.cloud_cli,
+    )
+
+
+def convert_recipe_deck(
+    recipe_id: str,
+    *,
+    output: str,
+    refresh: bool,
+    install: bool,
+    cloud_path: str,
+    cloud_cli: str,
+) -> int:
+    try:
+        deck_meta, main, ride = fetch_recipe_deck(recipe_id)
+        deck_struct = build_recipe_deck_structure(recipe_id, deck_meta, main, ride)
+        asset_base = PLACEHOLDER_ASSET_BASE.format(deck_id=deck_struct["deck_id"])
+        save_path, bundle, mapping = generate(deck_struct, Path(output), asset_base, refresh)
+        required_names = set(mapping.values()) | {CARD_BACK_NAME}
+        remote_path = cloud_path.format(deck_id=deck_struct["deck_id"])
+        CACHE_ROOT.mkdir(parents=True, exist_ok=True)
+        all_urls = sync_assets_to_cloud(CACHE_ROOT, deck_id=deck_struct["deck_id"], command=cloud_cli, remote_path=remote_path)
+        filtered_urls = {name: all_urls[name] for name in required_names if name in all_urls}
+        missing_urls = required_names - filtered_urls.keys()
+        if missing_urls:
+            raise RuntimeError("Steam Cloudに存在しないアセットがあります: " + ", ".join(sorted(missing_urls)))
+        asset_base = apply_cloud_urls(save_path, bundle / "manifest.json", remote_path, filtered_urls)
+    except (urllib.error.URLError, RuntimeError, ValueError) as e:
+        print(f"ERROR[recipe {recipe_id}]: {e}", file=sys.stderr)
+        return 1
+    print(f"created[recipe {recipe_id}]: {save_path}")
+    print(f"assets [recipe {recipe_id}]: {bundle / 'assets'}")
+    print(f"cache  [recipe {recipe_id}]: {CACHE_ROOT}")
+    print(f"cloud  [recipe {recipe_id}]: {asset_base}")
+    if install:
+        print(f"installed[recipe {recipe_id}]: {install_save(save_path)}")
+    print("TTSを起動し Games > Save & Load からセーブを読み込むと、画像はSteam Cloudから配信されます。")
+    return 0
+
+
+def cmd_recipe(args: argparse.Namespace) -> int:
+    deck_ids, recipe_ids = extract_recipe_sources(args.url)
+    if not deck_ids and not recipe_ids:
+        raise RuntimeError("公式デッキレシピから変換対象を抽出できませんでした。URLを確認してください。")
+
+    total = len(deck_ids) + len(recipe_ids)
+    print(f"found {total} deck(s) in recipe: {args.url}")
+    result = 0
+    idx = 0
+    for deck_id in deck_ids:
+        idx += 1
+        print(f"== [{idx}/{total}] converting {deck_id} ==")
+        status = convert_single_deck(
+            deck_id,
+            output=args.output,
+            refresh=args.refresh,
+            install=args.install,
+            cloud_path=args.cloud_path,
+            cloud_cli=args.cloud_cli,
+        )
+        if status != 0:
+            result = status
+    for recipe_id in recipe_ids:
+        idx += 1
+        print(f"== [{idx}/{total}] converting recipe #{recipe_id} ==")
+        status = convert_recipe_deck(
+            recipe_id,
+            output=args.output,
+            refresh=args.refresh,
+            install=args.install,
+            cloud_path=args.cloud_path,
+            cloud_cli=args.cloud_cli,
+        )
+        if status != 0:
+            result = status
+    return result
 
 
 
@@ -696,6 +892,23 @@ def main() -> int:
         help="sync-with-cloudコマンドのパスまたはディレクトリ。環境変数 DECKLOG2TTS_CLOUD_CLI に設定すると省略可",
     )
     c.set_defaults(func=cmd_convert)
+
+    r = sub.add_parser("recipe", help="公式サイトのデッキレシピURLから複数デッキを変換")
+    r.add_argument("url", help="例: https://cf-vanguard.com/deckrecipe/.../ .../")
+    r.add_argument("-o", "--output", default="output")
+    r.add_argument("--refresh", action="store_true", help="キャッシュ済み画像を再取得")
+    r.add_argument("--install", action="store_true", help="WindowsのTTS SavesへJSONをコピー")
+    r.add_argument(
+        "--cloud-path",
+        default=ENV_CLOUD_PATH or DEFAULT_CLOUD_PATH,
+        help="Steam Cloud上の保存先パス。{deck_id}を使用可能。環境変数 DECKLOG2TTS_CLOUD_PATH でも設定可",
+    )
+    r.add_argument(
+        "--cloud-cli",
+        default=ENV_CLOUD_CLI or "sync-with-cloud",
+        help="sync-with-cloudコマンドのパスまたはディレクトリ。環境変数 DECKLOG2TTS_CLOUD_CLI に設定すると省略可",
+    )
+    r.set_defaults(func=cmd_recipe)
     args = p.parse_args()
     return args.func(args)
 

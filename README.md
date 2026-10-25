@@ -8,7 +8,7 @@ Python 3.11以降を推奨します。外部Pythonパッケージは不要です
 
 ### Steam Cloud同期（必須）
 
-2026年10月24日時点で公式のSteam Cloud APIは公開されておらず、[TTS Cloud Sync](https://github.com/Chatanga/TTSCloudSync) の `sync-with-cloud` コマンドを利用する必要があります。GitHubリリースから配布されている `TTSCloudSync-win-x64` などのビルド済みバイナリを取得し、ZIPを展開したディレクトリを `PATH` に追加してください（ソース一式を `ttscloudsync/` 以下に配置しても自動ビルドは行われません）。SteamクライアントでTabletop Simulatorにログインした状態で実行する必要があります。
+2026年10月25日時点で公式のSteam Cloud APIは公開されておらず、[TTS Cloud Sync](https://github.com/Chatanga/TTSCloudSync) の `sync-with-cloud` コマンドを利用する必要があります。GitHubリリースから配布されている `TTSCloudSync-win-x64` などのビルド済みバイナリを取得し、ZIPを展開したディレクトリを `PATH` に追加してください（ソース一式を `ttscloudsync/` 以下に配置しても自動ビルドは行われません）。SteamクライアントでTabletop Simulatorにログインした状態で実行する必要があります。
 
 ```cmd
 python decklog2tts.py convert 1NWU1J --install
@@ -21,6 +21,19 @@ URL入力も可能です。
 ```cmd
 python decklog2tts.py convert "https://decklog.bushiroad.com/view/1NWU1J" --install
 ```
+
+### 公式デッキレシピからの一括変換
+
+公式サイトのデッキレシピ（`https://cf-vanguard.com/deckrecipe/.../`）では複数のDECK LOGコードが掲載されるケースがあります。
+`recipe` サブコマンドにURLを渡すと、ページ内で見つかったすべてのコードを順番に変換し、各デッキのTTS用セーブとアセットを生成します。
+DECK LOGコードが掲載されていないレシピでも、内部APIからカードリストを取得して自動的に変換します。
+
+```cmd
+python decklog2tts.py recipe "https://cf-vanguard.com/deckrecipe/events/areacup2026_s2_sapporo_4th/" --install
+python decklog2tts.py recipe "https://cf-vanguard.com/deckrecipe/deckrecipe_staff/dz-tbp02_deckrecipe_1/" --install
+```
+
+※Steam Cloudへのアップロードに失敗したDECK LOGコードはスキップとならずエラーを表示します。URLが正しいか、対象デッキが公開状態かを確認してください。
 
 ## 出力
 
@@ -49,6 +62,8 @@ cache/
 公式カード画像URLをTTSへ直接指定すると、ブラウザでは表示できてもTTS側で取得エラーになる場合があります。本ツールはSteam Cloud経由で配信される前提でJSONを書き換えるため、`sync-with-cloud` を利用できない環境では生成物を手動で編集し、外部ホスティング（Google Drive等）へ配置するなど別途対応が必要です。
 
 ## オプション
+
+以下のオプションは `convert` と `recipe` の両コマンドで共通です。
 
 - `--install`: Windowsの `Documents\My Games\Tabletop Simulator\Saves\Saved Objects` にSave JSONをコピー
 - `--refresh`: 既存の画像キャッシュを再取得

@@ -79,6 +79,15 @@ output/{deck_id}/
 - コマンド出力の `sha1_filename;https://...` 形式を解析し、TTS Save JSON内の `FaceURL` / `BackURL` をSteam Cloud URLへ差し替える。
 - 差し替え後のSaveを上書き保存し、`asset_base` もSteam Cloud上のベースURLに更新する。繰り返し実行時は差分アップロードのみが発生するため、同一カードを再利用する際の負荷が大幅に削減される。
 
+### 公式デッキレシピ対応
+
+- `extract_recipe_deck_ids(url)` で公式サイトのHTMLを取得し、`https://decklog.bushiroad.com/view/{DeckID}` 形式のリンクや「DECK LOGコード：XXXX」の表記からDECK LOGコードを抽出する。重複は除外し、抽出できない場合はエラーにする。
+- `extract_recipe_sources(url)` では上記に加えて `data-recipe-id="{id}"` を収集し、DECK LOGコードが掲載されていないページでも内部API呼び出し用のIDを取得できるようにした。
+- `fetch_recipe_deck(recipe_id)` は `https://cf-vanguard.com/manage/deckrecipe/detail` を呼び出し、`is_ride` でライドデッキを判定、`card_kind` が 4〜9 のカードを横向きカードとして扱う。
+- `recipe` サブコマンドは抽出した各Deck IDに対して `convert_single_deck` を順番に呼び出し、続けてレシピIDに対して `convert_recipe_deck` を実行する。同じオプション（`--refresh`、`--install`、`--cloud-path`、`--cloud-cli`）を再利用し、途中でエラーがあっても残りのデッキの処理は続行するが、終了コードは最後に発生した非0値を返す。
+- レシピAPI由来の出力は `RECIPE{id}` をDeck IDとし、`deck_meta.name` をタイトルに設定する。
+- ページ構造が変わってDeck Logリンクが掲載されなくなった場合に備えて、エラー文言でURL確認と公開状態の確認を促す。
+
 ## 5. TTS形式
 
 - メインデッキと `p_list` は別の `DeckCustom` オブジェクトとして出力
@@ -102,7 +111,7 @@ output/{deck_id}/
 - DECK LOGまたは公式画像サイトの仕様変更時は定数/API処理の更新が必要。
 - TTSにおける横向きカードの最終表示は、ゲーム側のレンダリング仕様に依存する。
 - 画像の公開再配布可否は本ツールでは判定しない。
-- Steam Cloud同期には [TTS Cloud Sync](https://github.com/Chatanga/TTSCloudSync) の `sync-with-cloud` が必要で、SteamクライアントでTTSにログインした状態（2026年10月24日現在）が前提。
+- Steam Cloud同期には [TTS Cloud Sync](https://github.com/Chatanga/TTSCloudSync) の `sync-with-cloud` が必要で、SteamクライアントでTTSにログインした状態（2026年10月25日現在）が前提。
 - 共有キャッシュの整合性が崩れた場合は `--refresh` を併用して再取得すること。
 
 ## 8. エラー処理
@@ -136,7 +145,11 @@ output/{deck_id}/
 
 ## 11. 実行例
 
-`cmd
+```cmd
 python decklog2tts.py convert 1NWU1J --install
-`
+```
+
+```cmd
+python decklog2tts.py recipe "https://cf-vanguard.com/deckrecipe/events/areacup2026_s2_sapporo_4th/" --install
+```
 
